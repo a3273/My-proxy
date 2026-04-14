@@ -94,9 +94,8 @@ class MaxstreamExtractor:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
         
-        # Clear previous mapping for this domain to start fresh if needed
-        if domain in self.resolver.mapping:
-            del self.resolver.mapping[domain]
+        # Clear previous mapping for this domain to start fresh
+        self.resolver.mapping.pop(domain, None)
 
         # Determine paths to try: Direct, Proxies, and then resolver override
         paths = []
@@ -118,16 +117,19 @@ class MaxstreamExtractor:
             proxy = path["proxy"]
             use_ip = path["use_ip"]
             
-            # Reset resolver mapping for this attempt
             if use_ip:
+                # CRITICAL: Must destroy old session to flush TCPConnector DNS cache!
+                # Otherwise connector reuses cached (hijacked) IP even with new resolver mapping.
+                if self.session and not self.session.closed:
+                    await self.session.close()
+                    self.session = None
                 self.resolver.mapping[domain] = use_ip
+                logger.info(f"DoH bypass: forcing {domain} -> {use_ip}")
             else:
                 self.resolver.mapping.pop(domain, None)
 
             session = await self._get_session(proxy=proxy)
             try:
-                # IMPORTANT: Use the original URL even with StaticResolver,
-                # so aiohttp sends the correct SNI and Host header automatically!
                 async with session.request(method, url, **kwargs) as response:
                     if response.status < 400:
                         text = await response.text()
@@ -138,6 +140,10 @@ class MaxstreamExtractor:
             except Exception as e:
                 logger.warning(f"Request to {url} failed (Error: {e}) [Proxy: {proxy}, StaticIP: {use_ip}]")
                 last_error = e
+                # If DoH attempt failed, destroy session so next IP gets fresh connector
+                if use_ip and self.session and not self.session.closed:
+                    await self.session.close()
+                    self.session = None
             finally:
                 if proxy and 'session' in locals() and not session.closed:
                     await session.close()
