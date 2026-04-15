@@ -277,7 +277,7 @@ class VixSrcExtractor:
                 )
                 if "window.canPlayFHD = true" in script_content or "canPlayFHD" in script_content:
                     query_params.append(("h", "1"))
-                query_params.append(("lang", "en"))
+                query_params.append(("lang", "it"))
                 if asn_match and asn_match.group(1):
                     query_params.append(("asn", asn_match.group(1)))
                 return urlunparse(parsed_playlist_url._replace(query=urlencode(query_params)))
@@ -310,7 +310,7 @@ class VixSrcExtractor:
         if "window.canPlayFHD = true" in script_content or "canPlayFHD" in script_content:
             query_params.append(("h", "1"))
 
-        query_params.append(("lang", "en"))
+        query_params.append(("lang", "it"))
         asn_match = re.search(r"['\"]asn['\"]\s*:\s*['\"]([^'\"]*)['\"]", script_content)
         if asn_match and asn_match.group(1):
             query_params.append(("asn", asn_match.group(1)))
