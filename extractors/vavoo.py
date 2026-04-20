@@ -42,38 +42,7 @@ class VavooExtractor:
         """Restituisce un proxy casuale dalla lista."""
         return random.choice(self.proxies) if self.proxies else None
         
-    def _check_warp_bypass(self, url: str):
-        """Forces WARP bypass for specific domains within the extractor."""
-        from config import ENABLE_WARP, VERSION_MODE
-        from services.hls_proxy import BYPASSED_WARP_DOMAINS
-        import os
-        if not ENABLE_WARP or VERSION_MODE != "Full":
-            return
-        
-        try:
-            from urllib.parse import urlsplit
-            domain = urlsplit(url).netloc
-            if domain and domain not in BYPASSED_WARP_DOMAINS:
-                # Always bypass these domains for Vavoo/Mediahubmx to ensure IP consistency
-                bypass_domains = ["lokke.app", "vavoo.to", "vavoo.tv", "mediahubmx.cc"]
-                if any(d in domain.lower() for d in bypass_domains):
-                    logger.info(f"⚡ [Vavoo Bypass] Excluding {domain} from WARP...")
-                    os.system(f"warp-cli --accept-tos tunnel host add {domain} > /dev/null 2>&1")
-                    BYPASSED_WARP_DOMAINS.add(domain)
-                    # Also add base domain to global registry
-                    base_domain = ".".join(domain.split(".")[-2:])
-                    BYPASSED_WARP_DOMAINS.add(base_domain)
-                    
-                    # Small sleep to let WARP stabilize routing table
-                    import time
-                    time.sleep(1.0) # Increased to 1s for better stability
-        except:
-            pass
-
     async def _get_session(self, url: str = None):
-        if url:
-            self._check_warp_bypass(url)
-
         if self.session is None or self.session.closed:
             timeout = ClientTimeout(total=60, connect=30, sock_read=30)
             proxy = self._get_random_proxy()

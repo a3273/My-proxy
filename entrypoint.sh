@@ -51,15 +51,10 @@ if [ "$ENABLE_WARP" = "true" ]; then
         (warp-cli --accept-tos tunnel host add cccdn.net > /dev/null 2>&1 || \
          warp-cli --accept-tos add-excluded-domain cccdn.net > /dev/null 2>&1) || true
          
-        (warp-cli --accept-tos tunnel host add vavoo.to > /dev/null 2>&1 || \
-         warp-cli --accept-tos add-excluded-domain vavoo.to > /dev/null 2>&1) || true
-        
+         
         # Set mode to WARP (Full TUN/VPN mode)
         warp-cli --accept-tos mode warp
         
-        warp-cli --accept-tos tunnel host add vavoo.to
-        warp-cli --accept-tos tunnel host add www.lokke.app
-        warp-cli --accept-tos tunnel host add mediahubmx.cc
         warp-cli --accept-tos connect
         
         # Small delay for connection to stabilize
