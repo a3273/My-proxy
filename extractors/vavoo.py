@@ -71,8 +71,8 @@ class VavooExtractor:
             pass
     
     async def _get_session(self, url: str = None):
-        if url:
-            self._check_warp_bypass(url)
+        # if url:
+        #     self._check_warp_bypass(url)
 
         if self.session is None or self.session.closed:
             timeout = ClientTimeout(total=60, connect=30, sock_read=30)

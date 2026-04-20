@@ -528,9 +528,7 @@ class HLSProxy:
         # Patterns for domains that usually block Cloudflare/WARP
         # Cinemacity, VixSrc, etc.
         bypass_patterns = [
-            "vavoo.to", "vcdn.io", "ngolpdkyoctjcddxshli469r.org",
-            "cccdn.net", "cinemacity.cc",
-            "lokke.app", "mediahubmx", "vavoo.tv"
+            "cccdn.net", "cinemacity.cc"
         ]
         
         try:
@@ -540,10 +538,6 @@ class HLSProxy:
             
             # If domain matches any pattern and hasn't been bypassed yet
             is_problematic = any(p in domain.lower() for p in bypass_patterns)
-
-            # Additional heuristic for Mediahubmx randomized domains
-            if not is_problematic and ("/sunshine/" in url.lower() or ".ngolp" in domain.lower()):
-                is_problematic = True
 
             if is_problematic:
                 if domain not in BYPASSED_WARP_DOMAINS:
