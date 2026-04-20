@@ -2300,48 +2300,8 @@ class HLSProxy:
                 logger.info(
                     f"📡 [Proxy Stream] {routing} - Using session{f' via proxy {session_proxy}' if session_proxy else ' (direct)'} for: {stream_url}"
                 )
-            # ✅ TLS FINGERPRINT BYPASS: Use curl_cffi for problematic CDNs (CinemaCity, Mediahubmx)
-            is_mediahub_dynamic = "/sunshine/" in stream_url.lower() or ".ngolp" in stream_url.lower()
-            use_curl_cffi = HAS_CURL_CFFI and (is_mediahub_dynamic or any(d in stream_url for d in ["cccdn.net", "cinemacity.cc"]))
-            
-            if use_curl_cffi:
-                curl_proxy = f"{request.scheme}://{session_proxy}" if session_proxy else None
-                if curl_proxy and "://" not in curl_proxy: curl_proxy = f"http://{curl_proxy}"
-
-                logger.info(f"🛡️ [Proxy Stream] Using curl_cffi (impersonate=chrome) for: {stream_url}")
-                
-                class CurlContextManager:
-                    def __init__(self, url, headers, proxy):
-                        self.url, self.headers, self.proxy = url, headers, proxy
-                        self.session = None
-                    async def __aenter__(self):
-                        self.session = CurlAsyncSession(impersonate="chrome120")
-                        await self.session.__aenter__()
-                        c_resp = await self.session.get(self.url, headers=self.headers, proxy=self.proxy, timeout=30)
-                        
-                        class AioHttpMock:
-                            def __init__(self, c_resp, session):
-                                self.status = c_resp.status_code
-                                self.headers = c_resp.headers
-                                self.url = c_resp.url
-                                self._content = c_resp.content
-                                self.session = session
-                                class Content:
-                                    def __init__(self, data): self.data = data
-                                    async def iter_chunked(self, n):
-                                        for i in range(0, len(self.data), n): yield self.data[i:i+n]
-                                self.content = Content(c_resp.content)
-                            async def read(self): return self._content
-                        return AioHttpMock(c_resp, self.session)
-                    async def __aexit__(self, exc_type, exc, tb):
-                        if self.session: await self.session.__aexit__(exc_type, exc, tb)
-
-                # Filter headers for curl_cffi: keep only essential media headers
-                # curl_cffi will provide its own Chrome-compliant UA and standard headers.
-                filtered_headers = {k: v for k, v in headers.items() if k.lower() in ["range", "accept-encoding", "connection"]}
-                resp_ctx = CurlContextManager(stream_url, filtered_headers, curl_proxy)
-            else:
-                resp_ctx = session.get(stream_url, headers=headers, ssl=not disable_ssl)
+            # Use standard aiohttp session
+            resp_ctx = session.get(stream_url, headers=headers, ssl=not disable_ssl)
 
             async with resp_ctx as resp:
                 content_type = resp.headers.get("content-type", "")
