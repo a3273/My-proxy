@@ -8,7 +8,7 @@ from urllib.parse import urlparse, urljoin, urlencode
 import aiohttp
 from bs4 import BeautifulSoup, SoupStrainer
 
-from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, get_proxy_for_url, TRANSPORT_ROUTES
+from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, get_proxy_for_url, TRANSPORT_ROUTES, get_solver_proxy_url
 from utils.cookie_cache import CookieCache
 
 logger = logging.getLogger(__name__)
@@ -52,14 +52,10 @@ class DeltabitExtractor:
             # Determina dinamicamente il proxy per questo specifico URL
             proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
             if proxy:
-                # FlareSolverr richiede il proxy nel formato {"url": "..."}
                 payload["proxy"] = {"url": proxy}
-                # Support Byparr specific implementation (headers instead of JSON)
-                clean_proxy = proxy
-                if clean_proxy.startswith("socks5h://"):
-                    clean_proxy = clean_proxy.replace("socks5h://", "socks5://")
-                fs_headers["X-Proxy-Server"] = clean_proxy
-                logger.debug(f"Deltabit: Passing proxy to FlareSolverr/Byparr: {clean_proxy}")
+                solver_proxy = get_solver_proxy_url(proxy)
+                fs_headers["X-Proxy-Server"] = solver_proxy
+                logger.debug(f"Deltabit: Passing explicit proxy to solver: {solver_proxy}")
 
         if post_data: payload["postData"] = post_data
         if session_id: payload["session"] = session_id

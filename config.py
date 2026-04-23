@@ -157,6 +157,17 @@ def get_connector_for_proxy(proxy_url: str, **kwargs):
     return ProxyConnector.from_url(connector_url, rdns=rdns, **kwargs)
 
 
+def get_solver_proxy_url(proxy_url: str | None) -> str | None:
+    """Normalizza il proxy per solver/browser che non supportano socks5h."""
+    if not proxy_url:
+        return None
+
+    if proxy_url.startswith("socks5h://"):
+        return proxy_url.replace("socks5h://", "socks5://", 1)
+
+    return proxy_url
+
+
 def get_ssl_setting_for_url(url: str, transport_routes: list) -> bool:
     """Determina se SSL deve essere disabilitato per un URL basato su TRANSPORT_ROUTES."""
     if not url or not transport_routes:

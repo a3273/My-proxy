@@ -7,7 +7,7 @@ from urllib.parse import urlparse, urljoin
 import aiohttp
 from curl_cffi.requests import AsyncSession
 
-from config import BYPARR_URL, get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES
+from config import BYPARR_URL, get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_solver_proxy_url
 from utils.cookie_cache import CookieCache
 
 logger = logging.getLogger(__name__)
@@ -80,16 +80,10 @@ class DoodStreamExtractor:
         proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
         headers = {}
         if proxy:
-            # FlareSolverr style (JSON payload)
             payload["proxy"] = {"url": proxy}
-            
-            # Byparr style (Header) - Ensure socks5h is converted to socks5 for Playwright compatibility
-            clean_proxy = proxy
-            if clean_proxy.startswith("socks5h://"):
-                clean_proxy = clean_proxy.replace("socks5h://", "socks5://")
-            
-            headers["X-Proxy-Server"] = clean_proxy
-            logger.debug(f"DoodStream: Passing cleaned proxy to Byparr: {clean_proxy}")
+            solver_proxy = get_solver_proxy_url(proxy)
+            headers["X-Proxy-Server"] = solver_proxy
+            logger.debug(f"DoodStream: Passing explicit proxy to Byparr: {solver_proxy}")
 
         async with aiohttp.ClientSession() as session:
             try:
