@@ -48,7 +48,7 @@ termux-setup-storage 2>/dev/null || true
 
 # Update and install base packages
 pkg update -y
-pkg install -y proot-distro git pulseaudio wget
+pkg install -y proot-distro git pulseaudio wget screen
 
 log "Termux packages installed."
 
@@ -235,12 +235,13 @@ LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}')
 [ -z "$LOCAL_IP" ] && LOCAL_IP=$(ifconfig wlan0 2>/dev/null | grep "inet " | awk '{print $2}')
 [ -z "$LOCAL_IP" ] && LOCAL_IP="localhost"
 
-echo "🎬 Starting EasyProxy Full..."
+echo "🎬 Starting EasyProxy Full in background (Screen)..."
 echo "   Access (Local):   http://localhost:7860"
 echo "   Access (Network): http://${LOCAL_IP}:7860"
-echo "   Stop:             Ctrl+C"
+echo "   To view logs:     screen -r easyproxy"
+echo "   To stop:          easyproxy-stop"
 echo ""
-proot-distro login ubuntu -- bash /root/easyproxy_start.sh
+screen -dmS easyproxy proot-distro login ubuntu -- bash /root/easyproxy_start.sh
 CMD_EOF
 chmod +x "$PREFIX/bin/easyproxy"
 
@@ -280,6 +281,7 @@ echo ""
 echo -e "  ${BLUE}Start:${NC}   easyproxy"
 echo -e "  ${BLUE}Update:${NC}  easyproxy-update"
 echo -e "  ${BLUE}Stop:${NC}    easyproxy-stop"
+echo -e "  ${BLUE}Logs:${NC}    screen -r easyproxy"
 echo -e "  ${BLUE}Config:${NC}  Edit inside proot:"
 echo -e "           proot-distro login ubuntu"
 echo -e "           nano /root/EasyProxy/.env"
