@@ -634,6 +634,10 @@ class HLSProxy:
         # Trigger dynamic bypass check before getting proxy settings
         self._check_dynamic_warp_bypass(url, force=bypass_warp)
         
+        # ✅ FIX: Decodifica il proxy se è URL-encoded
+        if forced_proxy:
+            forced_proxy = urllib.parse.unquote(forced_proxy)
+        
         proxy = forced_proxy or get_proxy_for_url(url, TRANSPORT_ROUTES, GLOBAL_PROXIES, bypass_warp=bypass_warp)
 
         prefer_default_family = "ai.the-sunmoon.site/key/" in url
@@ -2292,13 +2296,12 @@ class HLSProxy:
                 session, proxy_used = await self._get_proxy_session(
                     key_url, bypass_warp=bypass_warp, forced_proxy=forced_proxy
                 )
+                # ✅ LOG CRITICO: Deve essere info per apparire nei log standard
                 if proxy_used:
-                    logger.info(f"🔑 Fetching AES key via PROXY: {proxy_used}")
+                    logger.info(f"🔑 [Key Proxy] Routing through: {proxy_used}")
+                else:
+                    logger.warning(f"🔑 [Key Proxy] NO PROXY assigned for: {key_url}")
                     
-            # ✅ FIX: Per VixSrc, il referer della chiave DEVE essere il dominio del sito
-            if "vixsrc.to" in key_url:
-                headers["Referer"] = "https://vixsrc.to/"
-                headers["Origin"] = "https://vixsrc.to"
             secret_key = headers.pop("X-Secret-Key", None)
 
             # Calcola X-Key-Timestamp, X-Key-Nonce, X-Fingerprint, e X-Key-Path se abbiamo la secret_key
