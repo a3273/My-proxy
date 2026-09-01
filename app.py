@@ -6,11 +6,90 @@ import aiohttp
 import subprocess
 import time
 import socket
+import platform
+import urllib.request
 from aiohttp import web
 
 # ═══════════════════════════════════════════════════════════════════
-# WARP AUTO-START (avvio automatico per Pandastack e simili)
+# WARP AUTO-START con installazione runtime di wgcf e wireproxy
 # ═══════════════════════════════════════════════════════════════════
+
+def _install_wgcf():
+    """Scarica e installa wgcf se non presente."""
+    wgcf_path = "/usr/local/bin/wgcf"
+    if os.path.exists(wgcf_path):
+        return wgcf_path
+
+    print("[WARP] Installing wgcf...")
+
+    arch = platform.machine().lower()
+    if arch in ("x86_64", "amd64"):
+        wgcf_arch = "amd64"
+    elif arch in ("aarch64", "arm64"):
+        wgcf_arch = "arm64"
+    elif arch in ("armv7l", "armhf"):
+        wgcf_arch = "armv7"
+    else:
+        print(f"[WARP] Unsupported arch: {arch}")
+        return None
+
+    version = "2.2.29"
+    url = f"https://github.com/ViRb3/wgcf/releases/download/v{version}/wgcf_{version}_linux_{wgcf_arch}"
+
+    try:
+        urllib.request.urlretrieve(url, wgcf_path)
+        os.chmod(wgcf_path, 0o755)
+        print(f"[WARP] wgcf installed at {wgcf_path}")
+        return wgcf_path
+    except Exception as e:
+        print(f"[WARP] Failed to install wgcf: {e}")
+        return None
+
+def _install_wireproxy():
+    """Scarica e installa wireproxy se non presente."""
+    wireproxy_path = "/usr/local/bin/wireproxy"
+    if os.path.exists(wireproxy_path):
+        return wireproxy_path
+
+    print("[WARP] Installing wireproxy...")
+
+    arch = platform.machine().lower()
+    if arch in ("x86_64", "amd64"):
+        wp_arch = "amd64"
+    elif arch in ("aarch64", "arm64"):
+        wp_arch = "arm64"
+    elif arch in ("armv7l", "armhf"):
+        wp_arch = "arm"
+    else:
+        print(f"[WARP] Unsupported arch: {arch}")
+        return None
+
+    version = "1.0.9"
+    url = f"https://github.com/pufferffish/wireproxy/releases/download/v{version}/wireproxy_linux_{wp_arch}.tar.gz"
+
+    try:
+        import tarfile
+        import tempfile
+
+        tmp_dir = tempfile.mkdtemp()
+        tar_path = os.path.join(tmp_dir, "wireproxy.tar.gz")
+
+        urllib.request.urlretrieve(url, tar_path)
+
+        with tarfile.open(tar_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                if member.name == "wireproxy" or member.name.endswith("/wireproxy"):
+                    tar.extract(member, tmp_dir)
+                    extracted = os.path.join(tmp_dir, member.name)
+                    os.rename(extracted, wireproxy_path)
+                    os.chmod(wireproxy_path, 0o755)
+                    print(f"[WARP] wireproxy installed at {wireproxy_path}")
+                    break
+
+        return wireproxy_path
+    except Exception as e:
+        print(f"[WARP] Failed to install wireproxy: {e}")
+        return None
 
 def _start_warp_wireproxy():
     """Avvia WARP via wgcf + wireproxy in userspace (nessun NET_ADMIN richiesto)."""
@@ -34,6 +113,14 @@ def _start_warp_wireproxy():
     except Exception:
         pass
 
+    # Installa wgcf e wireproxy se mancanti
+    wgcf_path = _install_wgcf()
+    wireproxy_path = _install_wireproxy()
+
+    if not wgcf_path or not wireproxy_path:
+        print("[WARP] ⚠️ Could not install WARP tools, continuing without WARP")
+        return
+
     print("[WARP] Starting wireproxy...")
     os.makedirs(warp_dir, exist_ok=True)
 
@@ -41,7 +128,7 @@ def _start_warp_wireproxy():
     if not os.path.exists(os.path.join(warp_dir, "wgcf-account.toml")):
         print("[WARP] Registering account...")
         result = subprocess.run(
-            ["wgcf", "register", "--accept-tos"],
+            [wgcf_path, "register", "--accept-tos"],
             cwd=warp_dir,
             capture_output=True,
             text=True,
@@ -54,7 +141,7 @@ def _start_warp_wireproxy():
     # Update license
     if license_key:
         subprocess.run(
-            ["wgcf", "update", "--license-key", license_key],
+            [wgcf_path, "update", "--license-key", license_key],
             cwd=warp_dir,
             capture_output=True
         )
@@ -65,7 +152,7 @@ def _start_warp_wireproxy():
         cwd=warp_dir
     )
     result = subprocess.run(
-        ["wgcf", "generate"],
+        [wgcf_path, "generate"],
         cwd=warp_dir,
         capture_output=True,
         text=True
@@ -92,7 +179,7 @@ def _start_warp_wireproxy():
     log_path = "/var/log/wireproxy.log"
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     subprocess.Popen(
-        ["wireproxy", "-c", os.path.join(warp_dir, "wireproxy.conf")],
+        [wireproxy_path, "-c", os.path.join(warp_dir, "wireproxy.conf")],
         stdout=open(log_path, "a"),
         stderr=subprocess.STDOUT
     )
