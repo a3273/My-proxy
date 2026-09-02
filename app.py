@@ -14,13 +14,17 @@ from aiohttp import web
 # WARP AUTO-START con installazione runtime di wgcf e wireproxy
 # ═══════════════════════════════════════════════════════════════════
 
+# Forza flush dei print per i log container
+sys.stdout.flush()
+
 def _install_wgcf():
     """Scarica e installa wgcf se non presente."""
-    wgcf_path = "/usr/local/bin/wgcf"
+    # Usa /tmp per evitare problemi di permessi
+    wgcf_path = "/tmp/wgcf"
     if os.path.exists(wgcf_path):
         return wgcf_path
 
-    print("[WARP] Installing wgcf...")
+    print("[WARP] Installing wgcf...", flush=True)
 
     arch = platform.machine().lower()
     if arch in ("x86_64", "amd64"):
@@ -30,7 +34,7 @@ def _install_wgcf():
     elif arch in ("armv7l", "armhf"):
         wgcf_arch = "armv7"
     else:
-        print(f"[WARP] Unsupported arch: {arch}")
+        print(f"[WARP] Unsupported arch: {arch}", flush=True)
         return None
 
     version = "2.2.29"
@@ -39,19 +43,19 @@ def _install_wgcf():
     try:
         urllib.request.urlretrieve(url, wgcf_path)
         os.chmod(wgcf_path, 0o755)
-        print(f"[WARP] wgcf installed at {wgcf_path}")
+        print(f"[WARP] wgcf installed at {wgcf_path}", flush=True)
         return wgcf_path
     except Exception as e:
-        print(f"[WARP] Failed to install wgcf: {e}")
+        print(f"[WARP] Failed to install wgcf: {e}", flush=True)
         return None
 
 def _install_wireproxy():
     """Scarica e installa wireproxy se non presente."""
-    wireproxy_path = "/usr/local/bin/wireproxy"
+    wireproxy_path = "/tmp/wireproxy"
     if os.path.exists(wireproxy_path):
         return wireproxy_path
 
-    print("[WARP] Installing wireproxy...")
+    print("[WARP] Installing wireproxy...", flush=True)
 
     arch = platform.machine().lower()
     if arch in ("x86_64", "amd64"):
@@ -61,7 +65,7 @@ def _install_wireproxy():
     elif arch in ("armv7l", "armhf"):
         wp_arch = "arm"
     else:
-        print(f"[WARP] Unsupported arch: {arch}")
+        print(f"[WARP] Unsupported arch: {arch}", flush=True)
         return None
 
     version = "1.0.9"
@@ -83,18 +87,21 @@ def _install_wireproxy():
                     extracted = os.path.join(tmp_dir, member.name)
                     os.rename(extracted, wireproxy_path)
                     os.chmod(wireproxy_path, 0o755)
-                    print(f"[WARP] wireproxy installed at {wireproxy_path}")
+                    print(f"[WARP] wireproxy installed at {wireproxy_path}", flush=True)
                     break
 
         return wireproxy_path
     except Exception as e:
-        print(f"[WARP] Failed to install wireproxy: {e}")
+        print(f"[WARP] Failed to install wireproxy: {e}", flush=True)
         return None
 
 def _start_warp_wireproxy():
     """Avvia WARP via wgcf + wireproxy in userspace (nessun NET_ADMIN richiesto)."""
+    print("[WARP] Checking WARP mode...", flush=True)
+
     warp_mode = os.environ.get("WARP_MODE", "wireproxy")
     if warp_mode != "wireproxy":
+        print(f"[WARP] WARP_MODE={warp_mode}, skipping wireproxy", flush=True)
         return
 
     proxy_host = os.environ.get("WARP_PROXY_HOST", "127.0.0.1")
@@ -102,31 +109,34 @@ def _start_warp_wireproxy():
     warp_dir = os.environ.get("WARP_DIR", "/tmp/easyproxy-warp")
     license_key = os.environ.get("WARP_LICENSE_KEY", "")
 
+    print(f"[WARP] Config: host={proxy_host}, port={proxy_port}, dir={warp_dir}", flush=True)
+
     # Verifica se wireproxy è già in ascolto
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1)
         s.connect((proxy_host, proxy_port))
         s.close()
-        print("[WARP] Already running on {}:{}".format(proxy_host, proxy_port))
+        print(f"[WARP] Already running on {proxy_host}:{proxy_port}", flush=True)
         return
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARP] Not running yet ({e}), proceeding...", flush=True)
 
     # Installa wgcf e wireproxy se mancanti
     wgcf_path = _install_wgcf()
     wireproxy_path = _install_wireproxy()
 
     if not wgcf_path or not wireproxy_path:
-        print("[WARP] ⚠️ Could not install WARP tools, continuing without WARP")
+        print("[WARP] Could not install WARP tools, continuing without WARP", flush=True)
         return
 
-    print("[WARP] Starting wireproxy...")
+    print("[WARP] Starting wireproxy...", flush=True)
     os.makedirs(warp_dir, exist_ok=True)
 
     # Register
-    if not os.path.exists(os.path.join(warp_dir, "wgcf-account.toml")):
-        print("[WARP] Registering account...")
+    account_path = os.path.join(warp_dir, "wgcf-account.toml")
+    if not os.path.exists(account_path):
+        print("[WARP] Registering account...", flush=True)
         result = subprocess.run(
             [wgcf_path, "register", "--accept-tos"],
             cwd=warp_dir,
@@ -134,12 +144,17 @@ def _start_warp_wireproxy():
             text=True,
             input="y\n"
         )
+        print(f"[WARP] Register stdout: {result.stdout}", flush=True)
+        print(f"[WARP] Register stderr: {result.stderr}", flush=True)
         if result.returncode != 0:
-            print("[WARP] Register failed:", result.stderr)
+            print("[WARP] Register failed, aborting", flush=True)
             return
+    else:
+        print(f"[WARP] Account already exists at {account_path}", flush=True)
 
     # Update license
     if license_key:
+        print("[WARP] Updating license...", flush=True)
         subprocess.run(
             [wgcf_path, "update", "--license-key", license_key],
             cwd=warp_dir,
@@ -147,6 +162,7 @@ def _start_warp_wireproxy():
         )
 
     # Generate profile
+    print("[WARP] Generating profile...", flush=True)
     subprocess.run(
         ["rm", "-f", "wgcf-profile.conf", "wireproxy.conf"],
         cwd=warp_dir
@@ -157,14 +173,16 @@ def _start_warp_wireproxy():
         capture_output=True,
         text=True
     )
+    print(f"[WARP] Generate stdout: {result.stdout}", flush=True)
+    print(f"[WARP] Generate stderr: {result.stderr}", flush=True)
     if result.returncode != 0:
-        print("[WARP] Generate failed:", result.stderr)
+        print("[WARP] Generate failed, aborting", flush=True)
         return
 
     # Build wireproxy config
     profile_path = os.path.join(warp_dir, "wgcf-profile.conf")
     if not os.path.exists(profile_path):
-        print("[WARP] Profile not found")
+        print("[WARP] Profile not found", flush=True)
         return
 
     with open(profile_path, "r") as f:
@@ -175,16 +193,20 @@ def _start_warp_wireproxy():
         f.write("\n[Socks5]\n")
         f.write("BindAddress = {}:{}\n".format(proxy_host, proxy_port))
 
+    print(f"[WARP] Config written to {os.path.join(warp_dir, 'wireproxy.conf')}", flush=True)
+
     # Start wireproxy
-    log_path = "/var/log/wireproxy.log"
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    subprocess.Popen(
+    log_path = "/tmp/wireproxy.log"
+    print(f"[WARP] Starting wireproxy process...", flush=True)
+    proc = subprocess.Popen(
         [wireproxy_path, "-c", os.path.join(warp_dir, "wireproxy.conf")],
         stdout=open(log_path, "a"),
         stderr=subprocess.STDOUT
     )
+    print(f"[WARP] wireproxy PID: {proc.pid}", flush=True)
 
     # Wait for SOCKS5 to be ready
+    print("[WARP] Waiting for SOCKS5 proxy...", flush=True)
     for i in range(30):
         time.sleep(1)
         try:
@@ -192,12 +214,12 @@ def _start_warp_wireproxy():
             s.settimeout(1)
             s.connect((proxy_host, proxy_port))
             s.close()
-            print("[WARP] ✅ Ready on {}:{}".format(proxy_host, proxy_port))
+            print(f"[WARP] Ready on {proxy_host}:{proxy_port}", flush=True)
             return
         except Exception:
             pass
 
-    print("[WARP] ⚠️ Proxy not responding after 30s, continuing without WARP")
+    print("[WARP] Proxy not responding after 30s, continuing without WARP", flush=True)
 
 # Avvia WARP prima di tutto il resto
 _start_warp_wireproxy()
