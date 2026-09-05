@@ -30,6 +30,13 @@ start_userspace_warp() {
     rm -f wgcf-profile.conf
     wgcf generate || return 1
 
+    # WARP is deliberately IPv4-only. Do not install an IPv6 default route.
+    sed -i -E '/^[[:space:]]*AllowedIPs[[:space:]]*=/ s/,[[:space:]]*::\/0//g' wgcf-profile.conf
+    if grep -Eq '^[[:space:]]*AllowedIPs[[:space:]]*=.*::\/0' wgcf-profile.conf; then
+        echo "Could not create IPv4-only WARP profile (IPv6 route remains)." >&2
+        return 1
+    fi
+
     install -m 600 wgcf-profile.conf /etc/wireguard/wg0.conf
 
     "$WARPCTL" start || return 1
@@ -51,8 +58,7 @@ start_userspace_warp() {
     return 1
 }
 
-# No supervisor/restart loop: wireproxy starts once. Health checks report failure;
-# reconnect is explicit/manual only.
+# EasyProxy watchdog checks wireproxy/WARP and reconnects after consecutive failures.
 cleanup() {
     "$WARPCTL" stop >/dev/null 2>&1 || true
 }

@@ -702,6 +702,7 @@ class HLSProxyStreamingMixin:
                         final_curl_url,
                         headers=curl_headers,
                         proxies=curl_proxies,
+                        **get_curl_ipv4_options(session_proxy),
                         verify=not disable_ssl,
                         timeout=30,
                         stream=True,
@@ -1244,8 +1245,12 @@ class HLSProxyStreamingMixin:
                 )
             # Do not restart the kernel tunnel from a stream request.
             if active_proxy and getattr(_shared, 'WARP_PROXY_URL', None) and active_proxy == _shared.WARP_PROXY_URL:
-                if not await self.is_warp_healthy():
-                    logger.warning("WARP proxy confirmed unhealthy during stream failure; automatic reconnect is disabled")
+                warp_healthy, warp_reason = await self._probe_warp(timeout_sec=3)
+                if not warp_healthy:
+                    logger.warning(
+                        "WARP proxy confirmed unhealthy during stream failure; %s",
+                        warp_reason,
+                    )
                 else:
                     logger.debug("WARP proxy is healthy; stream failure was due to upstream source.")
             if "CERTIFICATE_VERIFY_FAILED" in str(e) or "SSL" in str(e) or "ssl" in str(e):
@@ -1433,7 +1438,15 @@ class HLSProxyStreamingMixin:
             return web.Response(status=401, text="Unauthorized: Invalid API Password")
 
         url = request.query.get("url")
-        logger.info(f"🔓 Decrypt Request: {url.split('/')[-1] if url else 'unknown'}")
+        requested_media_type = request.query.get("media_type", "").lower() or "unknown"
+        request_target = url or request.query.get("init_url")
+        segment_name = os.path.basename(urllib.parse.urlsplit(request_target).path) if request_target else "unknown"
+        decrypt_started = time.monotonic()
+        logger.info(
+            "🔓 Decrypt Request: track=%s segment=%s",
+            requested_media_type,
+            segment_name or "unknown",
+        )
 
         init_url = request.query.get("init_url")
         key = request.query.get("key")
@@ -1507,7 +1520,9 @@ class HLSProxyStreamingMixin:
                             ssl=not disable_ssl,
                             timeout=aiohttp.ClientTimeout(total=timeout),
                         ) as resp:
-                            if resp.status == 200:
+                            # CDN may return 206 for valid range-based DASH
+                            # segments; treat it like a successful fetch.
+                            if resp.status in (200, 206):
                                 content = await resp.read()
                                 if content:
                                     return content, False
@@ -1628,6 +1643,14 @@ class HLSProxyStreamingMixin:
                 source_name = (url or init_url or "").lower()
                 media_type = "audio" if "track_audio" in source_name else "video"
             content_type = "audio/mp4" if media_type == "audio" else "video/mp4"
+
+            logger.info(
+                "✅ [Decrypt] Completed: track=%s bytes=%d elapsed=%.2fs proxy=%s",
+                media_type,
+                len(ts_content),
+                time.monotonic() - decrypt_started,
+                segment_proxy or "direct",
+            )
 
             # Invia Risposta
             return web.Response(
