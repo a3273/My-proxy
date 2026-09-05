@@ -121,8 +121,9 @@ class VidLinkExtractor:
 
     @staticmethod
     def _normalize_proxy_url(proxy_url: str) -> str:
+        # Preserve the proxy scheme selected by the routing policy.
         if proxy_url.startswith("socks5://"):
-            return proxy_url.replace("socks5://", "socks5h://", 1)
+            return proxy_url
         if "://" not in proxy_url:
             return f"socks5h://{proxy_url}"
         return proxy_url
@@ -157,10 +158,11 @@ class VidLinkExtractor:
         if proxy:
             proxy = self._normalize_proxy_url(proxy)
             request_kwargs["proxies"] = {"http": proxy, "https": proxy}
-            request_kwargs.update(_cfg.get_curl_ipv4_options(proxy))
 
         try:
-            async with AsyncSession(impersonate="chrome124") as session:
+            async with AsyncSession(
+                impersonate="chrome124",
+            ) as session:
                 response = await session.get(
                     api_url, headers=headers, timeout=30, **request_kwargs
                 )
