@@ -8,6 +8,7 @@ import contextvars
 import tracemalloc
 import urllib.request
 import ipaddress
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from config_store import (
     DEFAULT_RECORDINGS_DIR,
@@ -36,7 +37,16 @@ ALL_PROXY_ERRORS = (
 )
 
 
-APP_VERSION = "2.11.25"
+# Proxy/WARP socket probes are blocking by design. Keep them out of asyncio's
+# default executor so DNS resolution and media/DRM work are not queued behind
+# a health check that is waiting on a dead proxy.
+_SOCKET_CHECK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8,
+    thread_name_prefix="proxy-health",
+)
+
+
+APP_VERSION = "2.11.41"
 
 _MEMORY_PROFILE_FRAMES = 15
 _memory_profile_baseline = None
@@ -183,7 +193,7 @@ LOG_LEVEL = LOG_LEVEL_MAP.get(LOG_LEVEL_STR, logging.WARNING)
 PROXY_TEST_TIMEOUT = 10
 cpu_cores = os.cpu_count() or 4
 PROXY_TEST_CONCURRENCY = 10 if cpu_cores == 1 else min(100, max(30, cpu_cores * 15))
-# Keep WARP as a normal dual-stack SOCKS route. The generated wgcf profile and
+# Keep WARP as a normal SOCKS route. The generated WireGuard profile and
 # wireproxy decide which address family is usable for each destination.
 WARP_PROXY_URL = "socks5://127.0.0.1:1080"
 # Monotonic timestamp of the last real WARP connector use. Health probes do
@@ -250,7 +260,7 @@ async def find_first_alive_async(proxies: list, concurrency: int | None = None) 
             
         async def _check_single(proxy_url=p, idx=i):
             try:
-                await loop.run_in_executor(None, _socket_check, proxy_url, 3)
+                await loop.run_in_executor(_SOCKET_CHECK_EXECUTOR, _socket_check, proxy_url, 3)
                 return idx, proxy_url
             except (OSError, socket.timeout):
                 return idx, None
@@ -318,7 +328,7 @@ async def filter_alive_async(proxies: list, concurrency: int | None = None) -> l
     async def _check(proxy: str):
         async with sem:
             try:
-                await loop.run_in_executor(None, _socket_check, proxy, 2)
+                await loop.run_in_executor(_SOCKET_CHECK_EXECUTOR, _socket_check, proxy, 2)
                 return proxy
             except (OSError, socket.timeout):
                 return None
@@ -364,10 +374,13 @@ def _get_dynamic_warp_exclude_domains() -> list:
     return merged
 
 def _is_warp_excluded(url: str) -> bool:
-    normalized = url.lower()
-    for domain in WARP_EXCLUDE_DOMAINS:
-        stripped = domain.lstrip("*.")
-        if stripped in normalized:
+    return _matches_excluded_host(url, WARP_EXCLUDE_DOMAINS)
+
+def _matches_excluded_host(url: str, domains: list) -> bool:
+    host = (urllib.parse.urlparse(url or "").hostname or "").lower().rstrip(".")
+    for domain in domains:
+        domain = domain.lower().strip().lstrip("*.").rstrip(".")
+        if domain and (host == domain or host.endswith("." + domain)):
             return True
     return False
 
@@ -375,14 +388,7 @@ def _get_dynamic_proxy_exclude_domains() -> list:
     return _cfg_get("proxy_exclude_domains", [])
 
 def _is_proxy_excluded(url: str) -> bool:
-    if not url:
-        return False
-    normalized = url.lower()
-    for domain in PROXY_EXCLUDE_DOMAINS:
-        stripped = domain.lstrip("*.")
-        if stripped in normalized:
-            return True
-    return False
+    return _matches_excluded_host(url, PROXY_EXCLUDE_DOMAINS)
 
 def _get_dynamic_global_proxies() -> list:
     return _cfg_get("global_proxies", [])
@@ -603,7 +609,7 @@ async def is_proxy_alive_async(proxy_url: str, force_check: bool = False) -> boo
             DEAD_PROXIES.pop(proxy_url, None)
     loop = asyncio.get_event_loop()
     try:
-        alive = await loop.run_in_executor(None, _socket_check, proxy_url, 5)
+        alive = await loop.run_in_executor(_SOCKET_CHECK_EXECUTOR, _socket_check, proxy_url, 5)
         if not alive:
             raise OSError("Proxy check returned false")
     except (socket.timeout, ConnectionRefusedError, OSError):
@@ -788,6 +794,12 @@ def get_connector_for_proxy(proxy_url: str, **kwargs):
     # avoidable timeouts/buffering. The caller still controls pool limits and
     # idle cleanup.
     if is_warp:
+        # Keep the original hostname in the SOCKS request so TLS preserves
+        # SNI/certificate validation. wireproxy itself is IPv4-only, so its
+        # remote resolver selects the IPv4 path without replacing the host
+        # with a bare address before TLS.
+        force_ipv4 = False
+        rdns = True
         kwargs.setdefault("keepalive_timeout", 15)
         kwargs.setdefault("force_close", False)
 
@@ -797,6 +809,17 @@ def get_connector_for_proxy(proxy_url: str, **kwargs):
         kwargs.setdefault("family", socket.AF_INET)
 
     return connector_cls.from_url(connector_url, rdns=rdns, **kwargs)
+
+
+def get_curl_ipv4_options(proxy_url: str | None) -> dict:
+    """Return curl_cffi options for IPv4-only WARP upstream requests."""
+    if not proxy_url or not is_warp_proxy_url(proxy_url):
+        return {}
+    try:
+        from curl_cffi import CurlOpt
+    except ImportError:
+        return {}
+    return {"curl_options": {CurlOpt.IPRESOLVE: 1}}
 
 
 class _IPv4ProxyConnector(ProxyConnector):
@@ -1122,7 +1145,7 @@ def get_system_stats():
             return "alighieri"
         if "wgx" in value:
             return "wgx"
-        if "warp" in value or "wgcf" in value:
+        if "warp" in value:
             return "warp"
         return "other"
 
@@ -1236,8 +1259,10 @@ def get_system_stats():
             "peak_mb": round(traced_peak / (1024 * 1024), 3),
         }
 
-    # EasyProxy process CPU (including child processes)
+    # EasyProxy process CPU (including child processes). Keep per-process
+    # readings so /api/info can identify whether Python or wireproxy is hot.
     proxy_cpu_percent = cpu_percent
+    process_cpu = {}
     try:
         # Use persistent Process objects: psutil.cpu_percent() needs a previous
         # baseline reading, otherwise it always returns 0.0.
@@ -1262,15 +1287,22 @@ def get_system_stats():
                 child.cpu_percent(interval=None)  # establish baseline
 
         p_cpu = _cpu_proc.cpu_percent(interval=None)
+        process_cpu[_cpu_proc.pid] = p_cpu
         for child in _cpu_children.values():
             try:
-                p_cpu += child.cpu_percent(interval=None)
+                child_cpu = child.cpu_percent(interval=None)
+                process_cpu[child.pid] = child_cpu
+                p_cpu += child_cpu
             except Exception:
                 pass
         get_system_stats._cpu_children = _cpu_children
 
         cores = os.cpu_count() or 1
         proxy_cpu_percent = min(100.0, p_cpu / cores)
+        for snapshot in process_tree:
+            raw = process_cpu.get(snapshot.get("pid"), 0.0)
+            snapshot["cpu_percent_raw"] = round(raw, 1)
+            snapshot["cpu_percent"] = round(min(100.0, raw / cores), 1)
     except Exception:
         pass
 
@@ -1285,7 +1317,9 @@ def get_system_stats():
             "percent": round(cpu_percent, 1)
         },
         "proxy_cpu": {
-            "percent": round(proxy_cpu_percent, 1)
+            "percent": round(proxy_cpu_percent, 1),
+            "percent_raw": round(p_cpu, 1),
+            "cores": cores,
         },
         "ram": {
             "total": ram_total,

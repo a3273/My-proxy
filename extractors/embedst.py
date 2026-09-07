@@ -8,6 +8,7 @@ from typing import Any
 from config import get_preferred_proxy_for_url
 import config as _cfg
 from extractors.base import BaseExtractor, ExtractorError
+from services.socks_bridge import get_http_bridge_for_proxy
 logger = logging.getLogger(__name__)
 
 EMBEDST_ORIGIN = "https://embed.st"
@@ -64,14 +65,15 @@ class EmbedStExtractor(BaseExtractor):
             raise ExtractorError(
                 "EmbedSt: direct fallback disabled; no proxy route available"
             )
-        if proxy and not str(proxy).lower().startswith(("http://", "https://")):
+        runner_proxy = await get_http_bridge_for_proxy(proxy)
+        if proxy and not runner_proxy:
             raise ExtractorError(
-                f"EmbedSt: selected route is not supported by the Node resolver ({proxy}); refusing direct fallback"
+                f"EmbedSt: failed to create HTTP bridge for proxy ({proxy})"
             )
 
         env = dict(os.environ)
-        if proxy:
-            env["EMBEDST_PROXY"] = str(proxy)
+        if runner_proxy:
+            env["EMBEDST_PROXY"] = str(runner_proxy)
         else:
             env.pop("EMBEDST_PROXY", None)
         if kwargs.get("background_refresh") or kwargs.get("force_refresh"):
@@ -197,7 +199,8 @@ class EmbedStExtractor(BaseExtractor):
         if proxy:
             request_kwargs["proxies"] = {"http": proxy, "https": proxy}
         try:
-            s = await self._get_curl_session()
+            curl_options = _cfg.get_curl_ipv4_options(proxy).get("curl_options")
+            s = await self._get_curl_session(curl_options)
             resp = await s.get(
                 url,
                 headers=headers,
@@ -228,5 +231,4 @@ class EmbedStExtractor(BaseExtractor):
             except Exception:
                 pass
             self._curl_session = None
-        if self.session and not self.session.closed:
-            await self.session.close()
+        await super().close()

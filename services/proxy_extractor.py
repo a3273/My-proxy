@@ -16,6 +16,7 @@ from services.proxy_shared import (
 )
 import config_store
 import asyncio
+import secrets
 import base64
 import gzip
 import re
@@ -142,6 +143,7 @@ class HLSProxyExtractorHandlerMixin:
                         "mediaset",
                         "wittytv",
                         "raiplay",
+                        "cinejoy",
                     ],
                     "examples": [
                         f"{get_public_base_url(request)}/extractor/video?d=https://vavoo.to/channel/123",
@@ -215,16 +217,6 @@ class HLSProxyExtractorHandlerMixin:
                     logger.debug(f"Proxy off for extractor: {base_key}")
                     
                 if base_key in warp_off_list or base_key in proxy_off_list:
-                    if extractor_key and extractor_key in self.extractors:
-                        _old = self.extractors.pop(extractor_key, None)
-                        self._extractor_atimes.pop(extractor_key, None)
-                        for _sr in [r for r in self._extractor_stream_atimes if r[0] == extractor_key]:
-                            self._extractor_stream_atimes.pop(_sr, None)
-                        if _old and hasattr(_old, "close"):
-                            try:
-                                await _old.close()
-                            except Exception:
-                                pass
                     extractor = await self.get_extractor(
                         url, dict(request.headers), host=host_param, bypass_warp=bypass_warp
                     )
@@ -234,8 +226,15 @@ class HLSProxyExtractorHandlerMixin:
                 extractor.extract(url, **extractor_kwargs), timeout=extractor_timeout
             )
             result_query_params = _protected_extractor_params(result)
-            extractor_key = self._extractor_key_for_instance(extractor)
-            stream_key = self._stream_key_for_url(request.query.get("orig_url") or url)
+            extractor_key = getattr(extractor, "extractor_name", None) or self._extractor_key_for_instance(extractor)
+            if extractor_key:
+                extractor_key = extractor_key.replace("_direct", "").replace("_noproxy", "")
+            stream_key = request.query.get("stream_key")
+            if not stream_key:
+                source_key = self._stream_key_for_url(
+                    request.query.get("orig_url") or url
+                ) or "stream"
+                stream_key = f"{source_key}-{secrets.token_hex(6)}"
 
             stream_url = result["destination_url"]
             stream_headers = result.get("request_headers", {})
@@ -495,6 +494,8 @@ class HLSProxyExtractorHandlerMixin:
                     bypass_warp=bypass_warp,
                     forced_proxy=selected_proxy,
                     force_direct=force_direct,
+                    extractor_key=extractor_key,
+                    stream_key=stream_key,
                 )
 
             # 2. URL PULITO (Per il JSON stile MediaFlow)
@@ -598,21 +599,5 @@ class HLSProxyExtractorHandlerMixin:
             BYPASS_PROXIES_CONTEXT.reset(proxy_bypass_token)
             SELECTED_PROXY_CONTEXT.reset(proxy_token)
             STRICT_PROXY_CONTEXT.reset(strict_proxy_token)
-            # 🚫 Cache disabilitata: chiudi sempre l'estrattore dopo l'uso.
-            # ponytail: ensure the extractor is resolved from the active instance and closed,
-            # even on error/cancellation before extractor_key gets updated.
-            if extractor:
-                try:
-                    extractor_key = self._extractor_key_for_instance(extractor) or extractor_key
-                except Exception:
-                    pass
-                if extractor_key and extractor_key in self.extractors:
-                    self.extractors.pop(extractor_key, None)
-                    self._extractor_atimes.pop(extractor_key, None)
-                    for _sr in [r for r in self._extractor_stream_atimes if r[0] == extractor_key]:
-                        self._extractor_stream_atimes.pop(_sr, None)
-                if hasattr(extractor, "close"):
-                    try:
-                        await extractor.close()
-                    except Exception:
-                        pass
+            # Registry instances are shared. Their owner closes them at shutdown,
+            # not when one of several concurrent requests finishes.
