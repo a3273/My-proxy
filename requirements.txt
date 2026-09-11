@@ -14,3 +14,4 @@ curl_cffi
 brotli
 psutil
 pywidevine
+gunicorn
